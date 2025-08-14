@@ -1,0 +1,686 @@
+import { z } from 'zod';
+import { createInstructorClient } from './instructorClient.js';
+
+// Mock the external dependencies for testing
+jest.mock('@instructor-ai/instructor');
+jest.mock('openai');
+
+import Instructor from '@instructor-ai/instructor';
+import OpenAI from 'openai';
+
+const mockInstructor = jest.mocked(Instructor);
+const mockOpenAI = jest.mocked(OpenAI);
+
+describe('Complex Type Support in instructor-js', () => {
+  let mockInstructorInstance: any;
+  let mockOpenAIInstance: any;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    
+    // Set up mock instances
+    mockOpenAIInstance = {} as OpenAI;
+    mockInstructorInstance = {
+      chat: {
+        completions: {
+          create: jest.fn(),
+        },
+      },
+    };
+
+    mockOpenAI.mockImplementation(() => mockOpenAIInstance);
+    mockInstructor.mockReturnValue(mockInstructorInstance);
+  });
+
+  describe('Deeply Nested Objects', () => {
+    it('should handle deeply nested object structures', async () => {
+      const NestedSchema = z.object({
+        level1: z.object({
+          level2: z.object({
+            level3: z.object({
+              level4: z.object({
+                deepValue: z.string().describe('A deeply nested string value'),
+                deepNumber: z.number().describe('A deeply nested number'),
+              }).describe('Fourth level nested object'),
+            }).describe('Third level nested object'),
+          }).describe('Second level nested object'),
+        }).describe('First level nested object'),
+        metadata: z.object({
+          created: z.string().datetime().describe('Creation timestamp'),
+          updated: z.string().datetime().optional().describe('Last update timestamp'),
+        }).describe('Metadata information'),
+      });
+
+      const expectedResult = {
+        level1: {
+          level2: {
+            level3: {
+              level4: {
+                deepValue: 'nested string',
+                deepNumber: 42,
+              },
+            },
+          },
+        },
+        metadata: {
+          created: '2024-01-01T00:00:00Z',
+          updated: '2024-01-02T00:00:00Z',
+        },
+      };
+
+      mockInstructorInstance.chat.completions.create.mockResolvedValue(expectedResult);
+
+      const client = createInstructorClient({
+        provider: 'openai',
+        apiKey: 'test-key',
+      });
+
+      const createMethod = client.chat.completions.create as any;
+      const result = await createMethod({
+        messages: [{ role: 'user', content: 'Extract deeply nested data structure' }],
+        model: 'gpt-4-turbo',
+        response_model: {
+          schema: NestedSchema,
+          name: 'NestedData',
+        },
+      });
+
+      expect(result).toEqual(expectedResult);
+      
+      // Verify the complex schema was passed correctly
+      const callArgs = mockInstructorInstance.chat.completions.create.mock.calls[0][0];
+      expect(callArgs.response_model.schema).toBe(NestedSchema);
+    });
+
+    it('should handle nested objects with mixed types', async () => {
+      const MixedNestedSchema = z.object({
+        user: z.object({
+          profile: z.object({
+            personal: z.object({
+              name: z.string().describe('Full name'),
+              age: z.number().min(0).max(150).describe('Age in years'),
+              isActive: z.boolean().describe('Account status'),
+            }),
+            preferences: z.object({
+              theme: z.enum(['light', 'dark', 'auto']).describe('UI theme preference'),
+              language: z.string().default('en').describe('Language code'),
+              notifications: z.array(z.enum(['email', 'sms', 'push'])).describe('Notification types'),
+            }),
+          }),
+          permissions: z.array(z.object({
+            resource: z.string().describe('Resource name'),
+            actions: z.array(z.string()).describe('Allowed actions'),
+            granted: z.boolean().describe('Permission granted'),
+          })).describe('User permissions'),
+        }),
+      });
+
+      const expectedResult = {
+        user: {
+          profile: {
+            personal: {
+              name: 'John Doe',
+              age: 30,
+              isActive: true,
+            },
+            preferences: {
+              theme: 'dark',
+              language: 'en',
+              notifications: ['email', 'push'],
+            },
+          },
+          permissions: [
+            {
+              resource: 'documents',
+              actions: ['read', 'write'],
+              granted: true,
+            },
+            {
+              resource: 'admin',
+              actions: ['read'],
+              granted: false,
+            },
+          ],
+        },
+      };
+
+      mockInstructorInstance.chat.completions.create.mockResolvedValue(expectedResult);
+
+      const client = createInstructorClient({
+        provider: 'openai',
+        apiKey: 'test-key',
+      });
+
+      const createMethod = client.chat.completions.create as any;
+      const result = await createMethod({
+        messages: [{ role: 'user', content: 'Extract complex user data with nested preferences and permissions' }],
+        model: 'gpt-4-turbo',
+        response_model: {
+          schema: MixedNestedSchema,
+          name: 'ComplexUser',
+        },
+      });
+
+      expect(result).toEqual(expectedResult);
+    });
+  });
+
+  describe('Complex Array Types', () => {
+    it('should handle arrays of complex nested objects', async () => {
+      const ComplexArraySchema = z.object({
+        organizations: z.array(z.object({
+          id: z.string().uuid().describe('Organization UUID'),
+          name: z.string().min(1).describe('Organization name'),
+          departments: z.array(z.object({
+            name: z.string().describe('Department name'),
+            budget: z.number().positive().describe('Department budget'),
+            employees: z.array(z.object({
+              id: z.number().describe('Employee ID'),
+              name: z.string().describe('Employee name'),
+              position: z.string().describe('Job position'),
+              skills: z.array(z.string()).describe('Employee skills'),
+              performance: z.object({
+                rating: z.number().min(1).max(5).describe('Performance rating'),
+                reviews: z.array(z.object({
+                  date: z.string().datetime().describe('Review date'),
+                  score: z.number().min(0).max(100).describe('Review score'),
+                  comments: z.string().optional().describe('Review comments'),
+                })).describe('Performance reviews'),
+              }).describe('Performance data'),
+            })).describe('Department employees'),
+          })).describe('Organization departments'),
+          headquarters: z.object({
+            address: z.string().describe('HQ address'),
+            country: z.string().describe('Country'),
+            established: z.number().int().min(1800).describe('Year established'),
+          }).describe('Headquarters information'),
+        })).describe('List of organizations'),
+      });
+
+      const expectedResult = {
+        organizations: [
+          {
+            id: '123e4567-e89b-12d3-a456-426614174000',
+            name: 'Tech Corp',
+            departments: [
+              {
+                name: 'Engineering',
+                budget: 1000000,
+                employees: [
+                  {
+                    id: 1,
+                    name: 'Alice Johnson',
+                    position: 'Senior Developer',
+                    skills: ['JavaScript', 'TypeScript', 'React'],
+                    performance: {
+                      rating: 4.5,
+                      reviews: [
+                        {
+                          date: '2024-01-15T10:00:00Z',
+                          score: 90,
+                          comments: 'Excellent work on the new feature',
+                        },
+                      ],
+                    },
+                  },
+                ],
+              },
+            ],
+            headquarters: {
+              address: '123 Tech Street, Silicon Valley',
+              country: 'USA',
+              established: 2010,
+            },
+          },
+        ],
+      };
+
+      mockInstructorInstance.chat.completions.create.mockResolvedValue(expectedResult);
+
+      const client = createInstructorClient({
+        provider: 'openai',
+        apiKey: 'test-key',
+      });
+
+      const createMethod = client.chat.completions.create as any;
+      const result = await createMethod({
+        messages: [{ role: 'user', content: 'Extract complex organizational data with nested departments and employees' }],
+        model: 'gpt-4-turbo',
+        response_model: {
+          schema: ComplexArraySchema,
+          name: 'OrganizationData',
+        },
+      });
+
+      expect(result).toEqual(expectedResult);
+    });
+
+    it('should handle arrays with union types and conditionals', async () => {
+      const UnionArraySchema = z.object({
+        items: z.array(z.union([
+          z.object({
+            type: z.literal('text').describe('Text item type'),
+            content: z.string().describe('Text content'),
+            formatting: z.object({
+              bold: z.boolean().describe('Bold formatting'),
+              italic: z.boolean().describe('Italic formatting'),
+              color: z.string().optional().describe('Text color'),
+            }).describe('Text formatting options'),
+          }),
+          z.object({
+            type: z.literal('image').describe('Image item type'),
+            url: z.string().url().describe('Image URL'),
+            alt: z.string().describe('Alt text'),
+            dimensions: z.object({
+              width: z.number().positive().describe('Image width'),
+              height: z.number().positive().describe('Image height'),
+            }).describe('Image dimensions'),
+          }),
+          z.object({
+            type: z.literal('link').describe('Link item type'),
+            url: z.string().url().describe('Link URL'),
+            title: z.string().describe('Link title'),
+            external: z.boolean().describe('External link flag'),
+          }),
+        ])).describe('Mixed content items'),
+      });
+
+      const expectedResult = {
+        items: [
+          {
+            type: 'text',
+            content: 'Hello world',
+            formatting: {
+              bold: true,
+              italic: false,
+              color: 'blue',
+            },
+          },
+          {
+            type: 'image',
+            url: 'https://example.com/image.jpg',
+            alt: 'Example image',
+            dimensions: {
+              width: 800,
+              height: 600,
+            },
+          },
+          {
+            type: 'link',
+            url: 'https://example.com',
+            title: 'Example Link',
+            external: true,
+          },
+        ],
+      };
+
+      mockInstructorInstance.chat.completions.create.mockResolvedValue(expectedResult);
+
+      const client = createInstructorClient({
+        provider: 'openai',
+        apiKey: 'test-key',
+      });
+
+      const createMethod = client.chat.completions.create as any;
+      const result = await createMethod({
+        messages: [{ role: 'user', content: 'Extract mixed content with text, images, and links' }],
+        model: 'gpt-4-turbo',
+        response_model: {
+          schema: UnionArraySchema,
+          name: 'MixedContent',
+        },
+      });
+
+      expect(result).toEqual(expectedResult);
+    });
+  });
+
+  describe('Advanced Enum Support', () => {
+    it('should handle complex enum combinations', async () => {
+      const ComplexEnumSchema = z.object({
+        status: z.enum(['draft', 'pending', 'approved', 'rejected', 'archived']).describe('Document status'),
+        priority: z.enum(['low', 'medium', 'high', 'critical']).describe('Priority level'),
+        category: z.enum(['technical', 'business', 'legal', 'marketing']).describe('Document category'),
+        permissions: z.object({
+          read: z.array(z.enum(['owner', 'admin', 'editor', 'viewer', 'guest'])).describe('Read permissions'),
+          write: z.array(z.enum(['owner', 'admin', 'editor'])).describe('Write permissions'),
+          delete: z.array(z.enum(['owner', 'admin'])).describe('Delete permissions'),
+        }).describe('Permission matrix'),
+        workflow: z.array(z.object({
+          stage: z.enum(['creation', 'review', 'approval', 'publication', 'archival']).describe('Workflow stage'),
+          assignee: z.enum(['author', 'reviewer', 'approver', 'publisher']).describe('Stage assignee'),
+          status: z.enum(['pending', 'in-progress', 'completed', 'skipped']).describe('Stage status'),
+          dueDate: z.string().datetime().optional().describe('Due date'),
+        })).describe('Workflow stages'),
+      });
+
+      const expectedResult = {
+        status: 'pending',
+        priority: 'high',
+        category: 'technical',
+        permissions: {
+          read: ['owner', 'admin', 'editor', 'viewer'],
+          write: ['owner', 'admin', 'editor'],
+          delete: ['owner', 'admin'],
+        },
+        workflow: [
+          {
+            stage: 'creation',
+            assignee: 'author',
+            status: 'completed',
+          },
+          {
+            stage: 'review',
+            assignee: 'reviewer',
+            status: 'in-progress',
+            dueDate: '2024-01-15T17:00:00Z',
+          },
+        ],
+      };
+
+      mockInstructorInstance.chat.completions.create.mockResolvedValue(expectedResult);
+
+      const client = createInstructorClient({
+        provider: 'openai',
+        apiKey: 'test-key',
+      });
+
+      const createMethod = client.chat.completions.create as any;
+      const result = await createMethod({
+        messages: [{ role: 'user', content: 'Extract document workflow with complex enum-based permissions and stages' }],
+        model: 'gpt-4-turbo',
+        response_model: {
+          schema: ComplexEnumSchema,
+          name: 'DocumentWorkflow',
+        },
+      });
+
+      expect(result).toEqual(expectedResult);
+    });
+  });
+
+  describe('Rich Description Preservation', () => {
+    it('should preserve detailed descriptions throughout complex schemas', async () => {
+      const RichDescriptionSchema = z.object({
+        apiResponse: z.object({
+          data: z.object({
+            user: z.object({
+              id: z.string().uuid().describe('Unique user identifier in UUID v4 format'),
+              email: z.string().email().describe('User\'s primary email address, must be valid and verified'),
+              profile: z.object({
+                firstName: z.string().min(1).max(50).describe('User\'s first name, 1-50 characters, no special characters allowed'),
+                lastName: z.string().min(1).max(50).describe('User\'s last name, 1-50 characters, no special characters allowed'),
+                dateOfBirth: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('Date of birth in YYYY-MM-DD format, must be valid date'),
+                phoneNumber: z.string().regex(/^\+[1-9]\d{1,14}$/).optional().describe('International phone number in E.164 format, optional field'),
+              }).describe('User profile information containing personal details'),
+              preferences: z.object({
+                language: z.enum(['en', 'es', 'fr', 'de', 'it']).describe('Preferred language code (ISO 639-1), defaults to en if not specified'),
+                timezone: z.string().describe('User\'s timezone in IANA format (e.g., America/New_York)'),
+                notifications: z.object({
+                  email: z.boolean().describe('Enable email notifications for important updates'),
+                  sms: z.boolean().describe('Enable SMS notifications for urgent alerts'),
+                  push: z.boolean().describe('Enable push notifications on mobile devices'),
+                }).describe('Notification preferences for different communication channels'),
+              }).describe('User preferences and settings configuration'),
+            }).describe('Complete user information including profile and preferences'),
+          }).describe('Response data payload containing user information'),
+          metadata: z.object({
+            requestId: z.string().uuid().describe('Unique request identifier for tracking and debugging purposes'),
+            timestamp: z.string().datetime().describe('ISO 8601 timestamp when the response was generated'),
+            version: z.string().regex(/^\d+\.\d+\.\d+$/).describe('API version in semantic versioning format (major.minor.patch)'),
+            processingTime: z.number().positive().describe('Request processing time in milliseconds'),
+          }).describe('Response metadata including tracking and performance information'),
+        }).describe('Complete API response structure with data and metadata'),
+      });
+
+      const expectedResult = {
+        apiResponse: {
+          data: {
+            user: {
+              id: '123e4567-e89b-12d3-a456-426614174000',
+              email: 'user@example.com',
+              profile: {
+                firstName: 'John',
+                lastName: 'Doe',
+                dateOfBirth: '1990-01-15',
+                phoneNumber: '+1234567890',
+              },
+              preferences: {
+                language: 'en',
+                timezone: 'America/New_York',
+                notifications: {
+                  email: true,
+                  sms: false,
+                  push: true,
+                },
+              },
+            },
+          },
+          metadata: {
+            requestId: '987fcdeb-51a2-43d7-8f9e-123456789abc',
+            timestamp: '2024-01-15T10:30:00Z',
+            version: '2.1.0',
+            processingTime: 150.5,
+          },
+        },
+      };
+
+      mockInstructorInstance.chat.completions.create.mockResolvedValue(expectedResult);
+
+      const client = createInstructorClient({
+        provider: 'openai',
+        apiKey: 'test-key',
+      });
+
+      const createMethod = client.chat.completions.create as any;
+      const result = await createMethod({
+        messages: [{ role: 'user', content: 'Extract API response with detailed user data and metadata' }],
+        model: 'gpt-4-turbo',
+        response_model: {
+          schema: RichDescriptionSchema,
+          name: 'ApiResponse',
+        },
+      });
+
+      expect(result).toEqual(expectedResult);
+      
+      // Verify that the schema with rich descriptions was passed correctly
+      const callArgs = mockInstructorInstance.chat.completions.create.mock.calls[0][0];
+      expect(callArgs.response_model.schema).toBe(RichDescriptionSchema);
+      
+      // Verify that descriptions are preserved in the schema structure
+      expect(RichDescriptionSchema.shape.apiResponse.description).toBeDefined();
+      expect(RichDescriptionSchema.shape.apiResponse.shape.data.shape.user.shape.id.description).toBeDefined();
+    });
+  });
+
+  describe('Edge Cases and Advanced Patterns', () => {
+    it('should handle recursive-like structures with self-referencing patterns', async () => {
+      // Note: True recursion isn't directly supported in Zod, but we can simulate
+      // deep nesting patterns that might occur in real-world scenarios
+      const TreeLikeSchema = z.object({
+        node: z.object({
+          id: z.string().describe('Node identifier'),
+          value: z.string().describe('Node value'),
+          children: z.array(z.object({
+            id: z.string().describe('Child node identifier'),
+            value: z.string().describe('Child node value'),
+            children: z.array(z.object({
+              id: z.string().describe('Grandchild node identifier'),
+              value: z.string().describe('Grandchild node value'),
+              isLeaf: z.boolean().describe('Whether this is a leaf node'),
+            })).describe('Grandchildren nodes'),
+          })).describe('Children nodes'),
+        }).describe('Root node with nested children'),
+      });
+
+      const expectedResult = {
+        node: {
+          id: 'root',
+          value: 'Root Node',
+          children: [
+            {
+              id: 'child1',
+              value: 'Child 1',
+              children: [
+                {
+                  id: 'grandchild1',
+                  value: 'Grandchild 1',
+                  isLeaf: true,
+                },
+              ],
+            },
+          ],
+        },
+      };
+
+      mockInstructorInstance.chat.completions.create.mockResolvedValue(expectedResult);
+
+      const client = createInstructorClient({
+        provider: 'openai',
+        apiKey: 'test-key',
+      });
+
+      const createMethod = client.chat.completions.create as any;
+      const result = await createMethod({
+        messages: [{ role: 'user', content: 'Extract tree-like hierarchical data structure' }],
+        model: 'gpt-4-turbo',
+        response_model: {
+          schema: TreeLikeSchema,
+          name: 'TreeStructure',
+        },
+      });
+
+      expect(result).toEqual(expectedResult);
+    });
+
+    it('should handle schemas with complex validation rules', async () => {
+      const ValidationRichSchema = z.object({
+        user: z.object({
+          username: z.string()
+            .min(3, 'Username must be at least 3 characters')
+            .max(20, 'Username must be at most 20 characters')
+            .regex(/^[a-zA-Z0-9_]+$/, 'Username can only contain letters, numbers, and underscores')
+            .describe('Unique username with specific format requirements'),
+          password: z.string()
+            .min(8, 'Password must be at least 8 characters')
+            .regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]/, 'Password must contain uppercase, lowercase, number, and special character')
+            .describe('Secure password meeting complexity requirements'),
+          age: z.number()
+            .int('Age must be an integer')
+            .min(13, 'Must be at least 13 years old')
+            .max(120, 'Age must be realistic')
+            .describe('User age with validation constraints'),
+          email: z.string()
+            .email('Must be a valid email address')
+            .endsWith('.com', 'Email must end with .com')
+            .describe('Valid email address ending with .com'),
+          score: z.number()
+            .min(0, 'Score cannot be negative')
+            .max(100, 'Score cannot exceed 100')
+            .multipleOf(0.1, 'Score must be to one decimal place')
+            .describe('Performance score between 0-100 with one decimal precision'),
+        }).describe('User data with comprehensive validation rules'),
+      });
+
+      const expectedResult = {
+        user: {
+          username: 'john_doe123',
+          password: 'SecurePass123!',
+          age: 25,
+          email: 'john.doe@example.com',
+          score: 87.5,
+        },
+      };
+
+      mockInstructorInstance.chat.completions.create.mockResolvedValue(expectedResult);
+
+      const client = createInstructorClient({
+        provider: 'openai',
+        apiKey: 'test-key',
+      });
+
+      const createMethod = client.chat.completions.create as any;
+      const result = await createMethod({
+        messages: [{ role: 'user', content: 'Extract user data with strict validation requirements' }],
+        model: 'gpt-4-turbo',
+        response_model: {
+          schema: ValidationRichSchema,
+          name: 'ValidatedUser',
+        },
+      });
+
+      expect(result).toEqual(expectedResult);
+    });
+  });
+
+  describe('Schema Composition and Transformation', () => {
+    it('should handle composed schemas with extend and merge operations', async () => {
+      // Base schemas
+      const BaseUserSchema = z.object({
+        id: z.string().uuid().describe('User ID'),
+        email: z.string().email().describe('Email address'),
+      });
+
+      const ProfileSchema = z.object({
+        firstName: z.string().describe('First name'),
+        lastName: z.string().describe('Last name'),
+        avatar: z.string().url().optional().describe('Avatar URL'),
+      });
+
+      const PreferencesSchema = z.object({
+        theme: z.enum(['light', 'dark']).describe('UI theme'),
+        language: z.string().describe('Language preference'),
+      });
+
+      // Composed schema using extend and merge
+      const ComposedUserSchema = BaseUserSchema.extend({
+        profile: ProfileSchema.describe('User profile information'),
+        preferences: PreferencesSchema.describe('User preferences'),
+        metadata: z.object({
+          createdAt: z.string().datetime().describe('Account creation date'),
+          lastLogin: z.string().datetime().optional().describe('Last login timestamp'),
+          isVerified: z.boolean().describe('Email verification status'),
+        }).describe('Account metadata'),
+      });
+
+      const expectedResult = {
+        id: '123e4567-e89b-12d3-a456-426614174000',
+        email: 'user@example.com',
+        profile: {
+          firstName: 'John',
+          lastName: 'Doe',
+          avatar: 'https://example.com/avatar.jpg',
+        },
+        preferences: {
+          theme: 'dark',
+          language: 'en',
+        },
+        metadata: {
+          createdAt: '2024-01-01T00:00:00Z',
+          lastLogin: '2024-01-15T10:30:00Z',
+          isVerified: true,
+        },
+      };
+
+      mockInstructorInstance.chat.completions.create.mockResolvedValue(expectedResult);
+
+      const client = createInstructorClient({
+        provider: 'openai',
+        apiKey: 'test-key',
+      });
+
+      const createMethod = client.chat.completions.create as any;
+      const result = await createMethod({
+        messages: [{ role: 'user', content: 'Extract complete user data with profile, preferences, and metadata' }],
+        model: 'gpt-4-turbo',
+        response_model: {
+          schema: ComposedUserSchema,
+          name: 'ComposedUser',
+        },
+      });
+
+      expect(result).toEqual(expectedResult);
+    });
+  });
+});
