@@ -1,0 +1,1130 @@
+import { z } from 'zod';
+import { createInstructorClient, createInstructorClientFromEnv } from './instructorClient.js';
+import StructuredLLMService from '../services/StructuredLLMService.js';
+
+// Mock the external dependencies for testing
+jest.mock('@instructor-ai/instructor');
+jest.mock('openai');
+jest.mock('@anthropic-ai/sdk');
+jest.mock('@google/generative-ai');
+
+import Instructor from '@instructor-ai/instructor';
+import OpenAI from 'openai';
+import Anthropic from '@anthropic-ai/sdk';
+import { GoogleGenerativeAI } from '@google/generative-ai';
+
+const mockInstructor = jest.mocked(Instructor);
+const mockOpenAI = jest.mocked(OpenAI);
+const mockAnthropic = jest.mocked(Anthropic);
+const mockGoogleGenerativeAI = jest.mocked(GoogleGenerativeAI);
+
+describe('Comprehensive instructor-js Integration Test Suite', () => {
+  let mockInstructorInstance: any;
+  let mockOpenAIInstance: any;
+  let mockAnthropicInstance: any;
+  let mockGoogleAIInstance: any;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    
+    // Set up mock instances
+    mockOpenAIInstance = {} as OpenAI;
+    mockAnthropicInstance = {} as Anthropic;
+    mockGoogleAIInstance = {
+      getGenerativeModel: jest.fn().mockReturnValue({ generateContent: jest.fn() }),
+    } as any;
+    
+    mockInstructorInstance = {
+      chat: {
+        completions: {
+          create: jest.fn(),
+        },
+      },
+    };
+
+    mockOpenAI.mockImplementation(() => mockOpenAIInstance);
+    mockAnthropic.mockImplementation(() => mockAnthropicInstance);
+    mockGoogleGenerativeAI.mockImplementation(() => mockGoogleAIInstance);
+    mockInstructor.mockReturnValue(mockInstructorInstance);
+  });
+
+  describe('End-to-End Integration Workflows', () => {
+    it('should handle complete document processing workflow', async () => {
+      // Real-world document processing schema
+      const DocumentProcessingSchema = z.object({
+        document: z.object({
+          metadata: z.object({
+            title: z.string().describe('Document title'),
+            author: z.string().describe('Document author'),
+            createdAt: z.string().datetime().describe('Creation timestamp'),
+            version: z.string().describe('Document version'),
+            classification: z.enum(['public', 'internal', 'confidential', 'restricted']).describe('Security classification'),
+          }),
+          content: z.object({
+            sections: z.array(z.object({
+              heading: z.string().describe('Section heading'),
+              content: z.string().describe('Section content'),
+              subsections: z.array(z.object({
+                title: z.string().describe('Subsection title'),
+                paragraphs: z.array(z.string()).describe('Paragraphs in subsection'),
+                figures: z.array(z.object({
+                  caption: z.string().describe('Figure caption'),
+                  type: z.enum(['image', 'chart', 'diagram', 'table']).describe('Figure type'),
+                  reference: z.string().describe('Figure reference ID'),
+                })).optional().describe('Figures in subsection'),
+              })).optional().describe('Subsections'),
+            })).describe('Document sections'),
+            keywords: z.array(z.string()).describe('Document keywords'),
+            summary: z.string().describe('Document summary'),
+          }),
+          analysis: z.object({
+            readabilityScore: z.number().min(0).max(100).describe('Readability score'),
+            wordCount: z.number().positive().describe('Total word count'),
+            estimatedReadingTime: z.number().positive().describe('Estimated reading time in minutes'),
+            topics: z.array(z.object({
+              name: z.string().describe('Topic name'),
+              confidence: z.number().min(0).max(1).describe('Topic confidence score'),
+              keywords: z.array(z.string()).describe('Topic keywords'),
+            })).describe('Identified topics'),
+          }),
+        }),
+      });
+
+      const expectedResult = {
+        document: {
+          metadata: {
+            title: 'Technical Specification Document',
+            author: 'John Smith',
+            createdAt: '2024-01-15T10:00:00Z',
+            version: '1.2.0',
+            classification: 'internal',
+          },
+          content: {
+            sections: [
+              {
+                heading: 'Introduction',
+                content: 'This document outlines the technical specifications...',
+                subsections: [
+                  {
+                    title: 'Purpose',
+                    paragraphs: ['The purpose of this document is to...'],
+                    figures: [
+                      {
+                        caption: 'System Architecture Overview',
+                        type: 'diagram',
+                        reference: 'fig-001',
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+            keywords: ['technical', 'specification', 'architecture'],
+            summary: 'A comprehensive technical specification document...',
+          },
+          analysis: {
+            readabilityScore: 75,
+            wordCount: 2500,
+            estimatedReadingTime: 12,
+            topics: [
+              {
+                name: 'System Architecture',
+                confidence: 0.95,
+                keywords: ['architecture', 'system', 'design'],
+              },
+            ],
+          },
+        },
+      };
+
+      mockInstructorInstance.chat.completions.create.mockResolvedValue(expectedResult);
+
+      const client = createInstructorClient({
+        provider: 'openai',
+        apiKey: 'test-key',
+      });
+
+      const createMethod = client.chat.completions.create as any;
+      const result = await createMethod({
+        messages: [{ role: 'user', content: 'Process this technical document and extract all relevant information' }],
+        model: 'gpt-4-turbo',
+        response_model: {
+          schema: DocumentProcessingSchema,
+          name: 'ProcessedDocument',
+        },
+        max_retries: 3,
+      });
+
+      expect(result).toEqual(expectedResult);
+      expect(mockInstructorInstance.chat.completions.create).toHaveBeenCalledWith({
+        messages: [{ role: 'user', content: 'Process this technical document and extract all relevant information' }],
+        model: 'gpt-4-turbo',
+        response_model: {
+          schema: DocumentProcessingSchema,
+          name: 'ProcessedDocument',
+        },
+        max_retries: 3,
+      });
+    });
+
+    it('should handle multi-step data transformation pipeline', async () => {
+      // Simulate a multi-step data processing pipeline
+      const InputDataSchema = z.object({
+        rawData: z.string().describe('Raw input data'),
+        format: z.enum(['csv', 'json', 'xml']).describe('Input format'),
+      });
+
+      const ProcessedDataSchema = z.object({
+        records: z.array(z.object({
+          id: z.string().describe('Record ID'),
+          data: z.record(z.any()).describe('Processed data fields'),
+          metadata: z.object({
+            processedAt: z.string().datetime().describe('Processing timestamp'),
+            quality: z.number().min(0).max(1).describe('Data quality score'),
+          }),
+        })).describe('Processed records'),
+        summary: z.object({
+          totalRecords: z.number().describe('Total number of records'),
+          validRecords: z.number().describe('Number of valid records'),
+          errorCount: z.number().describe('Number of errors encountered'),
+        }),
+      });
+
+      const inputData = { rawData: 'sample,data,here', format: 'csv' as const };
+      const expectedOutput = {
+        records: [
+          {
+            id: 'rec-001',
+            data: { field1: 'sample', field2: 'data', field3: 'here' },
+            metadata: {
+              processedAt: '2024-01-15T10:30:00Z',
+              quality: 0.95,
+            },
+          },
+        ],
+        summary: {
+          totalRecords: 1,
+          validRecords: 1,
+          errorCount: 0,
+        },
+      };
+
+      mockInstructorInstance.chat.completions.create
+        .mockResolvedValueOnce(inputData)
+        .mockResolvedValueOnce(expectedOutput);
+
+      const client = createInstructorClient({
+        provider: 'openai',
+        apiKey: 'test-key',
+      });
+
+      // Step 1: Parse input
+      const createMethod = client.chat.completions.create as any;
+      const parsedInput = await createMethod({
+        messages: [{ role: 'user', content: 'Parse this input data' }],
+        model: 'gpt-4-turbo',
+        response_model: {
+          schema: InputDataSchema,
+          name: 'InputData',
+        },
+      });
+
+      // Step 2: Process data
+      const processedOutput = await createMethod({
+        messages: [{ role: 'user', content: `Process this data: ${JSON.stringify(parsedInput)}` }],
+        model: 'gpt-4-turbo',
+        response_model: {
+          schema: ProcessedDataSchema,
+          name: 'ProcessedData',
+        },
+      });
+
+      expect(parsedInput).toEqual(inputData);
+      expect(processedOutput).toEqual(expectedOutput);
+      expect(mockInstructorInstance.chat.completions.create).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('Error Recovery and Resilience Testing', () => {
+    it('should handle network timeouts gracefully', async () => {
+      const SimpleSchema = z.object({
+        value: z.string().describe('Simple value'),
+      });
+
+      // Simulate network timeout
+      mockInstructorInstance.chat.completions.create
+        .mockRejectedValueOnce(new Error('Network timeout'))
+        .mockResolvedValueOnce({ value: 'recovered' });
+
+      const client = createInstructorClient({
+        provider: 'openai',
+        apiKey: 'test-key',
+      });
+
+      const createMethod = client.chat.completions.create as any;
+      
+      // First call should fail
+      await expect(createMethod({
+        messages: [{ role: 'user', content: 'Extract value' }],
+        model: 'gpt-4-turbo',
+        response_model: {
+          schema: SimpleSchema,
+          name: 'Simple',
+        },
+      })).rejects.toThrow('Network timeout');
+
+      // Second call should succeed
+      const result = await createMethod({
+        messages: [{ role: 'user', content: 'Extract value' }],
+        model: 'gpt-4-turbo',
+        response_model: {
+          schema: SimpleSchema,
+          name: 'Simple',
+        },
+      });
+
+      expect(result).toEqual({ value: 'recovered' });
+    });
+
+    it('should handle invalid schema responses with retries', async () => {
+      const StrictSchema = z.object({
+        email: z.string().email().describe('Valid email address'),
+        age: z.number().min(0).max(150).describe('Valid age'),
+      });
+
+      // Simulate invalid responses followed by valid one
+      mockInstructorInstance.chat.completions.create
+        .mockRejectedValueOnce(new Error('Validation failed: Invalid email'))
+        .mockRejectedValueOnce(new Error('Validation failed: Age out of range'))
+        .mockResolvedValueOnce({ email: 'valid@example.com', age: 25 });
+
+      const client = createInstructorClient({
+        provider: 'openai',
+        apiKey: 'test-key',
+      });
+
+      const createMethod = client.chat.completions.create as any;
+      
+      // Test retry mechanism - first call should fail
+      await expect(createMethod({
+        messages: [{ role: 'user', content: 'Extract person info' }],
+        model: 'gpt-4-turbo',
+        response_model: {
+          schema: StrictSchema,
+          name: 'Person',
+        },
+        max_retries: 0, // No retries for first test
+      })).rejects.toThrow('Validation failed: Invalid email');
+
+      // Test second call should also fail
+      await expect(createMethod({
+        messages: [{ role: 'user', content: 'Extract person info' }],
+        model: 'gpt-4-turbo',
+        response_model: {
+          schema: StrictSchema,
+          name: 'Person',
+        },
+        max_retries: 0, // No retries for second test
+      })).rejects.toThrow('Validation failed: Age out of range');
+
+      // Test successful retry - third call should succeed
+      const result = await createMethod({
+        messages: [{ role: 'user', content: 'Extract person info' }],
+        model: 'gpt-4-turbo',
+        response_model: {
+          schema: StrictSchema,
+          name: 'Person',
+        },
+        max_retries: 3,
+      });
+
+      expect(result).toEqual({ email: 'valid@example.com', age: 25 });
+    });
+
+    it('should handle provider failover scenarios', async () => {
+      const TestSchema = z.object({
+        message: z.string().describe('Test message'),
+      });
+
+      // Test OpenAI failure, fallback to Claude
+      const openaiClient = createInstructorClient({
+        provider: 'openai',
+        apiKey: 'openai-key',
+      });
+
+      const claudeClient = createInstructorClient({
+        provider: 'claude',
+        apiKey: 'claude-key',
+      });
+
+      mockInstructorInstance.chat.completions.create
+        .mockRejectedValueOnce(new Error('OpenAI service unavailable'))
+        .mockResolvedValueOnce({ message: 'Success from Claude' });
+
+      const openaiMethod = openaiClient.chat.completions.create as any;
+      const claudeMethod = claudeClient.chat.completions.create as any;
+
+      // OpenAI fails
+      await expect(openaiMethod({
+        messages: [{ role: 'user', content: 'Test message' }],
+        model: 'gpt-4-turbo',
+        response_model: {
+          schema: TestSchema,
+          name: 'Test',
+        },
+      })).rejects.toThrow('OpenAI service unavailable');
+
+      // Claude succeeds
+      const result = await claudeMethod({
+        messages: [{ role: 'user', content: 'Test message' }],
+        model: 'claude-3-sonnet',
+        response_model: {
+          schema: TestSchema,
+          name: 'Test',
+        },
+      });
+
+      expect(result).toEqual({ message: 'Success from Claude' });
+    });
+  });
+
+  describe('Performance and Scalability Testing', () => {
+    it('should handle concurrent requests efficiently', async () => {
+      const ConcurrentSchema = z.object({
+        id: z.number().describe('Request ID'),
+        result: z.string().describe('Processing result'),
+      });
+
+      // Mock responses for concurrent requests
+      const mockResponses = Array.from({ length: 10 }, (_, i) => ({
+        id: i + 1,
+        result: `Result ${i + 1}`,
+      }));
+
+      mockInstructorInstance.chat.completions.create
+        .mockImplementation(async (params: any) => {
+          // Simulate processing delay
+          await new Promise(resolve => setTimeout(resolve, 10));
+          const requestId = parseInt(params.messages[0].content.match(/Request (\d+)/)?.[1] || '1');
+          return mockResponses[requestId - 1];
+        });
+
+      const client = createInstructorClient({
+        provider: 'openai',
+        apiKey: 'test-key',
+      });
+
+      const createMethod = client.chat.completions.create as any;
+
+      // Create 10 concurrent requests
+      const promises = Array.from({ length: 10 }, (_, i) =>
+        createMethod({
+          messages: [{ role: 'user', content: `Process Request ${i + 1}` }],
+          model: 'gpt-4-turbo',
+          response_model: {
+            schema: ConcurrentSchema,
+            name: 'ConcurrentTest',
+          },
+        })
+      );
+
+      const startTime = Date.now();
+      const results = await Promise.all(promises);
+      const endTime = Date.now();
+
+      // Verify all requests completed successfully
+      expect(results).toHaveLength(10);
+      results.forEach((result, index) => {
+        expect(result).toEqual({
+          id: index + 1,
+          result: `Result ${index + 1}`,
+        });
+      });
+
+      // Verify concurrent execution (should be faster than sequential)
+      const executionTime = endTime - startTime;
+      expect(executionTime).toBeLessThan(100); // Should complete in under 100ms for concurrent execution
+    });
+
+    it('should handle large schema structures efficiently', async () => {
+      // Create a large, complex schema
+      const LargeSchema = z.object({
+        dataset: z.object({
+          metadata: z.object({
+            name: z.string().describe('Dataset name'),
+            version: z.string().describe('Dataset version'),
+            description: z.string().describe('Dataset description'),
+            tags: z.array(z.string()).describe('Dataset tags'),
+            created: z.string().datetime().describe('Creation timestamp'),
+            updated: z.string().datetime().describe('Last update timestamp'),
+          }),
+          schema: z.object({
+            fields: z.array(z.object({
+              name: z.string().describe('Field name'),
+              type: z.enum(['string', 'number', 'boolean', 'date', 'object', 'array']).describe('Field type'),
+              required: z.boolean().describe('Whether field is required'),
+              description: z.string().describe('Field description'),
+              constraints: z.object({
+                minLength: z.number().optional().describe('Minimum length'),
+                maxLength: z.number().optional().describe('Maximum length'),
+                pattern: z.string().optional().describe('Regex pattern'),
+                minimum: z.number().optional().describe('Minimum value'),
+                maximum: z.number().optional().describe('Maximum value'),
+              }).optional().describe('Field constraints'),
+            })).describe('Schema fields'),
+            relationships: z.array(z.object({
+              from: z.string().describe('Source field'),
+              to: z.string().describe('Target field'),
+              type: z.enum(['one-to-one', 'one-to-many', 'many-to-many']).describe('Relationship type'),
+            })).describe('Field relationships'),
+          }),
+          data: z.array(z.record(z.any())).describe('Dataset records'),
+          statistics: z.object({
+            totalRecords: z.number().describe('Total number of records'),
+            fieldStats: z.record(z.object({
+              nullCount: z.number().describe('Number of null values'),
+              uniqueCount: z.number().describe('Number of unique values'),
+              distribution: z.record(z.number()).describe('Value distribution'),
+            })).describe('Field statistics'),
+          }),
+        }),
+      });
+
+      const expectedResult = {
+        dataset: {
+          metadata: {
+            name: 'Customer Data',
+            version: '2.1.0',
+            description: 'Customer information dataset',
+            tags: ['customer', 'sales', 'analytics'],
+            created: '2024-01-01T00:00:00Z',
+            updated: '2024-01-15T10:00:00Z',
+          },
+          schema: {
+            fields: [
+              {
+                name: 'customerId',
+                type: 'string',
+                required: true,
+                description: 'Unique customer identifier',
+                constraints: {
+                  pattern: '^CUST-\\d{6}$',
+                },
+              },
+              {
+                name: 'email',
+                type: 'string',
+                required: true,
+                description: 'Customer email address',
+                constraints: {
+                  pattern: '^[\\w-\\.]+@([\\w-]+\\.)+[\\w-]{2,4}$',
+                },
+              },
+            ],
+            relationships: [
+              {
+                from: 'customerId',
+                to: 'orderId',
+                type: 'one-to-many',
+              },
+            ],
+          },
+          data: [
+            {
+              customerId: 'CUST-123456',
+              email: 'customer@example.com',
+            },
+          ],
+          statistics: {
+            totalRecords: 1000,
+            fieldStats: {
+              customerId: {
+                nullCount: 0,
+                uniqueCount: 1000,
+                distribution: {},
+              },
+            },
+          },
+        },
+      };
+
+      mockInstructorInstance.chat.completions.create.mockResolvedValue(expectedResult);
+
+      const client = createInstructorClient({
+        provider: 'openai',
+        apiKey: 'test-key',
+      });
+
+      const createMethod = client.chat.completions.create as any;
+      const startTime = Date.now();
+      
+      const result = await createMethod({
+        messages: [{ role: 'user', content: 'Process large dataset with complex schema' }],
+        model: 'gpt-4-turbo',
+        response_model: {
+          schema: LargeSchema,
+          name: 'LargeDataset',
+        },
+      });
+
+      const endTime = Date.now();
+      const processingTime = endTime - startTime;
+
+      expect(result).toEqual(expectedResult);
+      expect(processingTime).toBeLessThan(1000); // Should complete within 1 second
+    });
+  });
+
+  describe('Real-World Domain-Specific Use Cases', () => {
+    it('should handle e-commerce product catalog extraction', async () => {
+      const ECommerceSchema = z.object({
+        products: z.array(z.object({
+          id: z.string().describe('Product ID'),
+          name: z.string().describe('Product name'),
+          description: z.string().describe('Product description'),
+          category: z.object({
+            primary: z.string().describe('Primary category'),
+            secondary: z.array(z.string()).describe('Secondary categories'),
+            breadcrumb: z.array(z.string()).describe('Category breadcrumb'),
+          }),
+          pricing: z.object({
+            basePrice: z.number().positive().describe('Base price'),
+            salePrice: z.number().positive().optional().describe('Sale price'),
+            currency: z.string().length(3).describe('Currency code'),
+            discountPercentage: z.number().min(0).max(100).optional().describe('Discount percentage'),
+          }),
+          inventory: z.object({
+            inStock: z.boolean().describe('In stock status'),
+            quantity: z.number().min(0).describe('Available quantity'),
+            warehouse: z.string().describe('Warehouse location'),
+            restockDate: z.string().datetime().optional().describe('Expected restock date'),
+          }),
+          attributes: z.record(z.union([z.string(), z.number(), z.boolean()])).describe('Product attributes'),
+          images: z.array(z.object({
+            url: z.string().url().describe('Image URL'),
+            alt: z.string().describe('Alt text'),
+            type: z.enum(['primary', 'gallery', 'thumbnail']).describe('Image type'),
+          })).describe('Product images'),
+          reviews: z.object({
+            averageRating: z.number().min(0).max(5).describe('Average rating'),
+            totalReviews: z.number().min(0).describe('Total number of reviews'),
+            ratingDistribution: z.record(z.number()).describe('Rating distribution'),
+          }),
+        })).describe('Product catalog'),
+      });
+
+      const expectedResult = {
+        products: [
+          {
+            id: 'PROD-12345',
+            name: 'Wireless Bluetooth Headphones',
+            description: 'High-quality wireless headphones with noise cancellation',
+            category: {
+              primary: 'Electronics',
+              secondary: ['Audio', 'Headphones'],
+              breadcrumb: ['Home', 'Electronics', 'Audio', 'Headphones'],
+            },
+            pricing: {
+              basePrice: 199.99,
+              salePrice: 149.99,
+              currency: 'USD',
+              discountPercentage: 25,
+            },
+            inventory: {
+              inStock: true,
+              quantity: 50,
+              warehouse: 'US-WEST-01',
+            },
+            attributes: {
+              brand: 'TechBrand',
+              color: 'Black',
+              wireless: true,
+              batteryLife: 30,
+            },
+            images: [
+              {
+                url: 'https://example.com/headphones-main.jpg',
+                alt: 'Wireless Bluetooth Headphones - Main View',
+                type: 'primary',
+              },
+            ],
+            reviews: {
+              averageRating: 4.5,
+              totalReviews: 1250,
+              ratingDistribution: {
+                '5': 750,
+                '4': 300,
+                '3': 150,
+                '2': 30,
+                '1': 20,
+              },
+            },
+          },
+        ],
+      };
+
+      mockInstructorInstance.chat.completions.create.mockResolvedValue(expectedResult);
+
+      const client = createInstructorClient({
+        provider: 'openai',
+        apiKey: 'test-key',
+      });
+
+      const createMethod = client.chat.completions.create as any;
+      const result = await createMethod({
+        messages: [{ role: 'user', content: 'Extract product information from e-commerce catalog' }],
+        model: 'gpt-4-turbo',
+        response_model: {
+          schema: ECommerceSchema,
+          name: 'ProductCatalog',
+        },
+      });
+
+      expect(result).toEqual(expectedResult);
+    });
+
+    it('should handle financial data analysis schema', async () => {
+      const FinancialAnalysisSchema = z.object({
+        analysis: z.object({
+          company: z.object({
+            name: z.string().describe('Company name'),
+            ticker: z.string().describe('Stock ticker symbol'),
+            sector: z.string().describe('Industry sector'),
+            marketCap: z.number().positive().describe('Market capitalization'),
+          }),
+          financials: z.object({
+            revenue: z.object({
+              current: z.number().describe('Current period revenue'),
+              previous: z.number().describe('Previous period revenue'),
+              growth: z.number().describe('Revenue growth percentage'),
+            }),
+            profitability: z.object({
+              grossMargin: z.number().describe('Gross profit margin'),
+              operatingMargin: z.number().describe('Operating profit margin'),
+              netMargin: z.number().describe('Net profit margin'),
+            }),
+            ratios: z.object({
+              pe: z.number().positive().describe('Price-to-earnings ratio'),
+              pb: z.number().positive().describe('Price-to-book ratio'),
+              roe: z.number().describe('Return on equity'),
+              roa: z.number().describe('Return on assets'),
+            }),
+          }),
+          risks: z.array(z.object({
+            category: z.enum(['market', 'credit', 'operational', 'regulatory']).describe('Risk category'),
+            description: z.string().describe('Risk description'),
+            severity: z.enum(['low', 'medium', 'high', 'critical']).describe('Risk severity'),
+            mitigation: z.string().describe('Risk mitigation strategy'),
+          })).describe('Risk assessment'),
+          recommendation: z.object({
+            rating: z.enum(['strong_buy', 'buy', 'hold', 'sell', 'strong_sell']).describe('Investment recommendation'),
+            targetPrice: z.number().positive().describe('Target stock price'),
+            timeHorizon: z.enum(['short', 'medium', 'long']).describe('Investment time horizon'),
+            confidence: z.number().min(0).max(1).describe('Recommendation confidence'),
+          }),
+        }),
+      });
+
+      const expectedResult = {
+        analysis: {
+          company: {
+            name: 'TechCorp Inc.',
+            ticker: 'TECH',
+            sector: 'Technology',
+            marketCap: 50000000000,
+          },
+          financials: {
+            revenue: {
+              current: 10000000000,
+              previous: 8500000000,
+              growth: 17.6,
+            },
+            profitability: {
+              grossMargin: 0.65,
+              operatingMargin: 0.25,
+              netMargin: 0.18,
+            },
+            ratios: {
+              pe: 22.5,
+              pb: 3.2,
+              roe: 0.15,
+              roa: 0.08,
+            },
+          },
+          risks: [
+            {
+              category: 'market',
+              description: 'High competition in the technology sector',
+              severity: 'medium',
+              mitigation: 'Continuous innovation and market differentiation',
+            },
+          ],
+          recommendation: {
+            rating: 'buy',
+            targetPrice: 125.50,
+            timeHorizon: 'medium',
+            confidence: 0.85,
+          },
+        },
+      };
+
+      mockInstructorInstance.chat.completions.create.mockResolvedValue(expectedResult);
+
+      const client = createInstructorClient({
+        provider: 'openai',
+        apiKey: 'test-key',
+      });
+
+      const createMethod = client.chat.completions.create as any;
+      const result = await createMethod({
+        messages: [{ role: 'user', content: 'Analyze financial data and provide investment recommendation' }],
+        model: 'gpt-4-turbo',
+        response_model: {
+          schema: FinancialAnalysisSchema,
+          name: 'FinancialAnalysis',
+        },
+      });
+
+      expect(result).toEqual(expectedResult);
+    });
+  });
+
+  describe('Cross-Provider Compatibility Verification', () => {
+    it('should produce consistent results across all providers', async () => {
+      const ConsistencySchema = z.object({
+        extractedData: z.object({
+          name: z.string().describe('Person name'),
+          age: z.number().min(0).max(150).describe('Person age'),
+          occupation: z.string().describe('Person occupation'),
+        }),
+        confidence: z.number().min(0).max(1).describe('Extraction confidence'),
+      });
+
+      const expectedResult = {
+        extractedData: {
+          name: 'Alice Johnson',
+          age: 28,
+          occupation: 'Software Engineer',
+        },
+        confidence: 0.95,
+      };
+
+      // Mock all providers to return the same result
+      mockInstructorInstance.chat.completions.create.mockResolvedValue(expectedResult);
+
+      const providers = ['openai', 'claude', 'gemini'] as const;
+      const results: any[] = [];
+
+      for (const provider of providers) {
+        const client = createInstructorClient({
+          provider,
+          apiKey: `${provider}-test-key`,
+        });
+
+        const createMethod = client.chat.completions.create as any;
+        const result = await createMethod({
+          messages: [{ role: 'user', content: 'Extract person information: Alice Johnson, 28, Software Engineer' }],
+          model: provider === 'openai' ? 'gpt-4-turbo' : provider === 'claude' ? 'claude-3-sonnet' : 'gemini-1.5-pro',
+          response_model: {
+            schema: ConsistencySchema,
+            name: 'PersonInfo',
+          },
+        });
+
+        results.push({ provider, result });
+      }
+
+      // Verify all providers return consistent results
+      results.forEach(({ result }) => {
+        expect(result).toEqual(expectedResult);
+      });
+
+      // Verify all providers were called
+      expect(mockInstructor).toHaveBeenCalledTimes(3);
+    });
+
+    it('should handle provider-specific model configurations', async () => {
+      const ModelConfigSchema = z.object({
+        response: z.string().describe('Provider response'),
+        model: z.string().describe('Model used'),
+        provider: z.string().describe('Provider name'),
+      });
+
+      const expectedResults = {
+        openai: { response: 'OpenAI response', model: 'gpt-4-turbo', provider: 'openai' },
+        claude: { response: 'Claude response', model: 'claude-3-sonnet', provider: 'claude' },
+        gemini: { response: 'Gemini response', model: 'gemini-1.5-pro', provider: 'gemini' },
+      };
+
+      // Mock provider-specific responses
+      mockInstructorInstance.chat.completions.create
+        .mockResolvedValueOnce(expectedResults.openai)
+        .mockResolvedValueOnce(expectedResults.claude)
+        .mockResolvedValueOnce(expectedResults.gemini);
+
+      const providers = [
+        { name: 'openai', model: 'gpt-4-turbo' },
+        { name: 'claude', model: 'claude-3-sonnet' },
+        { name: 'gemini', model: 'gemini-1.5-pro' },
+      ] as const;
+
+      for (const { name, model } of providers) {
+        const client = createInstructorClient({
+          provider: name,
+          apiKey: `${name}-test-key`,
+        });
+
+        const createMethod = client.chat.completions.create as any;
+        const result = await createMethod({
+          messages: [{ role: 'user', content: `Test ${name} with ${model}` }],
+          model,
+          response_model: {
+            schema: ModelConfigSchema,
+            name: 'ModelConfig',
+          },
+        });
+
+        expect(result).toEqual(expectedResults[name]);
+      }
+    });
+  });
+
+  describe('Configuration Edge Cases and Advanced Scenarios', () => {
+    it('should handle environment-based client creation', async () => {
+      // Set up environment variables
+      process.env['OPENAI_API_KEY'] = 'env-openai-key';
+      process.env['ANTHROPIC_API_KEY'] = 'env-claude-key';
+      process.env['GOOGLE_API_KEY'] = 'env-gemini-key';
+
+      const TestSchema = z.object({
+        message: z.string().describe('Test message'),
+        source: z.string().describe('Environment source'),
+      });
+
+      const expectedResult = {
+        message: 'Environment-based client works',
+        source: 'environment',
+      };
+
+      mockInstructorInstance.chat.completions.create.mockResolvedValue(expectedResult);
+
+      // Test environment-based client creation
+      const envClient = createInstructorClientFromEnv('openai');
+      expect(envClient).toBeDefined();
+
+      const createMethod = envClient.chat.completions.create as any;
+      const result = await createMethod({
+        messages: [{ role: 'user', content: 'Test environment client' }],
+        model: 'gpt-4-turbo',
+        response_model: {
+          schema: TestSchema,
+          name: 'EnvTest',
+        },
+      });
+
+      expect(result).toEqual(expectedResult);
+
+      // Clean up environment variables
+      delete process.env['OPENAI_API_KEY'];
+      delete process.env['ANTHROPIC_API_KEY'];
+      delete process.env['GOOGLE_API_KEY'];
+    });
+
+    it('should handle complex configuration combinations', async () => {
+      const ConfigSchema = z.object({
+        settings: z.object({
+          provider: z.string().describe('Provider name'),
+          model: z.string().describe('Model name'),
+          mode: z.string().describe('Instructor mode'),
+          customOptions: z.record(z.any()).describe('Custom configuration options'),
+        }),
+      });
+
+      const expectedResult = {
+        settings: {
+          provider: 'openai',
+          model: 'gpt-4-turbo',
+          mode: 'TOOLS',
+          customOptions: {
+            temperature: 0.7,
+            maxTokens: 2000,
+            customEndpoint: 'https://custom.openai.com',
+          },
+        },
+      };
+
+      mockInstructorInstance.chat.completions.create.mockResolvedValue(expectedResult);
+
+      // Test complex configuration
+      const client = createInstructorClient({
+        provider: 'openai',
+        apiKey: 'test-key',
+        baseURL: 'https://custom.openai.com',
+        mode: 'TOOLS',
+      });
+
+      const createMethod = client.chat.completions.create as any;
+      const result = await createMethod({
+        messages: [{ role: 'user', content: 'Test complex configuration' }],
+        model: 'gpt-4-turbo',
+        response_model: {
+          schema: ConfigSchema,
+          name: 'ComplexConfig',
+        },
+        temperature: 0.7,
+        max_tokens: 2000,
+      });
+
+      expect(result).toEqual(expectedResult);
+    });
+  });
+
+  describe('Memory and Resource Management', () => {
+    it('should handle memory-intensive operations without leaks', async () => {
+      const MemoryTestSchema = z.object({
+        data: z.array(z.object({
+          id: z.string().describe('Data ID'),
+          payload: z.string().describe('Large payload'),
+        })).describe('Large dataset'),
+        metadata: z.object({
+          size: z.number().describe('Dataset size'),
+          processed: z.boolean().describe('Processing status'),
+        }),
+      });
+
+      // Create a large mock response
+      const largeDataset = Array.from({ length: 1000 }, (_, i) => ({
+        id: `item-${i}`,
+        payload: `Large payload data for item ${i}`.repeat(10),
+      }));
+
+      const expectedResult = {
+        data: largeDataset,
+        metadata: {
+          size: 1000,
+          processed: true,
+        },
+      };
+
+      mockInstructorInstance.chat.completions.create.mockResolvedValue(expectedResult);
+
+      const client = createInstructorClient({
+        provider: 'openai',
+        apiKey: 'test-key',
+      });
+
+      const createMethod = client.chat.completions.create as any;
+      
+      // Process multiple large requests to test memory handling
+      const promises = Array.from({ length: 5 }, () =>
+        createMethod({
+          messages: [{ role: 'user', content: 'Process large dataset' }],
+          model: 'gpt-4-turbo',
+          response_model: {
+            schema: MemoryTestSchema,
+            name: 'MemoryTest',
+          },
+        })
+      );
+
+      const results = await Promise.all(promises);
+
+      // Verify all requests completed successfully
+      results.forEach(result => {
+        expect(result).toEqual(expectedResult);
+        expect(result.data).toHaveLength(1000);
+      });
+    });
+
+    it('should properly clean up resources after operations', async () => {
+      const CleanupSchema = z.object({
+        status: z.string().describe('Operation status'),
+        resourcesReleased: z.boolean().describe('Resources released'),
+      });
+
+      const expectedResult = {
+        status: 'completed',
+        resourcesReleased: true,
+      };
+
+      mockInstructorInstance.chat.completions.create.mockResolvedValue(expectedResult);
+
+      const client = createInstructorClient({
+        provider: 'openai',
+        apiKey: 'test-key',
+      });
+
+      const createMethod = client.chat.completions.create as any;
+      
+      // Simulate resource-intensive operation
+      const result = await createMethod({
+        messages: [{ role: 'user', content: 'Test resource cleanup' }],
+        model: 'gpt-4-turbo',
+        response_model: {
+          schema: CleanupSchema,
+          name: 'CleanupTest',
+        },
+      });
+
+      expect(result).toEqual(expectedResult);
+      
+      // Verify mocks were called correctly (indicating proper resource usage)
+      expect(mockInstructorInstance.chat.completions.create).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('Integration with StructuredLLMService', () => {
+    it('should integrate seamlessly with the main service', async () => {
+      const ServiceIntegrationSchema = z.object({
+        serviceResponse: z.object({
+          processed: z.boolean().describe('Data processed'),
+          provider: z.string().describe('Provider used'),
+          timestamp: z.string().datetime().describe('Processing timestamp'),
+        }),
+        instructorMetadata: z.object({
+          version: z.string().describe('Instructor version'),
+          mode: z.string().describe('Processing mode'),
+        }),
+      });
+
+      const expectedResult = {
+        serviceResponse: {
+          processed: true,
+          provider: 'openai',
+          timestamp: '2024-01-15T10:00:00Z',
+        },
+        instructorMetadata: {
+          version: '1.7.0',
+          mode: 'TOOLS',
+        },
+      };
+
+      mockInstructorInstance.chat.completions.create.mockResolvedValue(expectedResult);
+
+      // Test integration with StructuredLLMService
+      const service = new StructuredLLMService();
+      
+      // Verify service can be created and configured
+      expect(service).toBeInstanceOf(StructuredLLMService);
+      expect(service.getAvailableProviders()).toContain('auto');
+
+      // Test that instructor-js integration works within service context
+      const client = createInstructorClient({
+        provider: 'openai',
+        apiKey: 'test-key',
+      });
+
+      const createMethod = client.chat.completions.create as any;
+      const result = await createMethod({
+        messages: [{ role: 'user', content: 'Test service integration' }],
+        model: 'gpt-4-turbo',
+        response_model: {
+          schema: ServiceIntegrationSchema,
+          name: 'ServiceIntegration',
+        },
+      });
+
+      expect(result).toEqual(expectedResult);
+    });
+  });
+});

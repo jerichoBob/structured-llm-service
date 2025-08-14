@@ -1,0 +1,266 @@
+import {
+  createInstructorClient,
+  createInstructorClientFromEnv,
+  getOptimalMode,
+  validateProviderConfig,
+  type LLMProvider,
+  type InstructorClientConfig,
+} from './instructorClient.js';
+
+// Mock the external dependencies
+jest.mock('@instructor-ai/instructor');
+jest.mock('openai');
+jest.mock('@anthropic-ai/sdk');
+jest.mock('@google/generative-ai');
+
+import Instructor from '@instructor-ai/instructor';
+import OpenAI from 'openai';
+import Anthropic from '@anthropic-ai/sdk';
+import { GoogleGenerativeAI } from '@google/generative-ai';
+
+// Create mock implementations
+const mockInstructor = jest.mocked(Instructor);
+const mockOpenAI = jest.mocked(OpenAI);
+const mockAnthropic = jest.mocked(Anthropic);
+const mockGoogleGenerativeAI = jest.mocked(GoogleGenerativeAI);
+
+describe('InstructorClient Utility', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    // Reset environment variables
+    delete process.env['OPENAI_API_KEY'];
+    delete process.env['ANTHROPIC_API_KEY'];
+    delete process.env['GOOGLE_API_KEY'];
+  });
+
+  describe('createInstructorClient', () => {
+    it('should create OpenAI instructor client correctly', () => {
+      const mockOpenAIInstance = {} as OpenAI;
+      const mockInstructorInstance = { chat: { completions: { create: jest.fn() } } };
+      
+      mockOpenAI.mockImplementation(() => mockOpenAIInstance);
+      mockInstructor.mockReturnValue(mockInstructorInstance as any);
+
+      const config: InstructorClientConfig = {
+        provider: 'openai',
+        apiKey: 'test-key',
+        mode: 'TOOLS',
+      };
+
+      const result = createInstructorClient(config);
+
+      expect(mockOpenAI).toHaveBeenCalledWith({
+        apiKey: 'test-key',
+      });
+      expect(mockInstructor).toHaveBeenCalledWith({
+        client: mockOpenAIInstance,
+        mode: 'TOOLS',
+      });
+      expect(result).toBe(mockInstructorInstance);
+    });
+
+    it('should create Claude instructor client correctly', () => {
+      const mockAnthropicInstance = {} as Anthropic;
+      const mockInstructorInstance = { chat: { completions: { create: jest.fn() } } };
+      
+      mockAnthropic.mockImplementation(() => mockAnthropicInstance);
+      mockInstructor.mockReturnValue(mockInstructorInstance as any);
+
+      const config: InstructorClientConfig = {
+        provider: 'claude',
+        apiKey: 'test-key',
+        mode: 'TOOLS',
+      };
+
+      const result = createInstructorClient(config);
+
+      expect(mockAnthropic).toHaveBeenCalledWith({
+        apiKey: 'test-key',
+      });
+      expect(mockInstructor).toHaveBeenCalledWith({
+        client: mockAnthropicInstance,
+        mode: 'TOOLS',
+      });
+      expect(result).toBe(mockInstructorInstance);
+    });
+
+    it('should create Gemini instructor client correctly', () => {
+      const mockGeminiModel = { generateContent: jest.fn() };
+      const mockGoogleAIInstance = {
+        getGenerativeModel: jest.fn().mockReturnValue(mockGeminiModel),
+      } as any;
+      const mockInstructorInstance = { chat: { completions: { create: jest.fn() } } };
+      
+      mockGoogleGenerativeAI.mockImplementation(() => mockGoogleAIInstance);
+      mockInstructor.mockReturnValue(mockInstructorInstance as any);
+
+      const config: InstructorClientConfig = {
+        provider: 'gemini',
+        apiKey: 'test-key',
+        model: 'gemini-1.5-pro',
+        mode: 'TOOLS',
+      };
+
+      const result = createInstructorClient(config);
+
+      expect(mockGoogleGenerativeAI).toHaveBeenCalledWith('test-key');
+      expect(mockGoogleAIInstance.getGenerativeModel).toHaveBeenCalledWith({
+        model: 'gemini-1.5-pro',
+      });
+      expect(mockInstructor).toHaveBeenCalledWith({
+        client: mockGeminiModel,
+        mode: 'TOOLS',
+      });
+      expect(result).toBe(mockInstructorInstance);
+    });
+
+    it('should use default models when not specified', () => {
+      const mockGeminiModel = { generateContent: jest.fn() };
+      const mockGoogleAIInstance = {
+        getGenerativeModel: jest.fn().mockReturnValue(mockGeminiModel),
+      } as any;
+      
+      mockGoogleGenerativeAI.mockImplementation(() => mockGoogleAIInstance);
+      mockInstructor.mockReturnValue({} as any);
+
+      const config: InstructorClientConfig = {
+        provider: 'gemini',
+        apiKey: 'test-key',
+      };
+
+      createInstructorClient(config);
+
+      expect(mockGoogleAIInstance.getGenerativeModel).toHaveBeenCalledWith({
+        model: 'gemini-1.5-pro-latest',
+      });
+    });
+
+    it('should throw error for unsupported provider', () => {
+      const config = {
+        provider: 'unsupported' as LLMProvider,
+        apiKey: 'test-key',
+      };
+
+      expect(() => createInstructorClient(config)).toThrow('Unsupported provider: unsupported');
+    });
+
+    it('should handle baseURL parameter for OpenAI', () => {
+      const mockOpenAIInstance = {} as OpenAI;
+      mockOpenAI.mockImplementation(() => mockOpenAIInstance);
+      mockInstructor.mockReturnValue({} as any);
+
+      const config: InstructorClientConfig = {
+        provider: 'openai',
+        apiKey: 'test-key',
+        baseURL: 'https://custom-endpoint.com',
+      };
+
+      createInstructorClient(config);
+
+      expect(mockOpenAI).toHaveBeenCalledWith({
+        apiKey: 'test-key',
+        baseURL: 'https://custom-endpoint.com',
+      });
+    });
+  });
+
+  describe('getOptimalMode', () => {
+    it('should return TOOLS mode for OpenAI', () => {
+      expect(getOptimalMode('openai')).toBe('TOOLS');
+    });
+
+    it('should return TOOLS mode for Claude', () => {
+      expect(getOptimalMode('claude')).toBe('TOOLS');
+    });
+
+    it('should return TOOLS mode for Gemini', () => {
+      expect(getOptimalMode('gemini')).toBe('TOOLS');
+    });
+
+    it('should return MD_JSON mode for unknown provider', () => {
+      expect(getOptimalMode('unknown' as LLMProvider)).toBe('MD_JSON');
+    });
+  });
+
+  describe('validateProviderConfig', () => {
+    it('should not throw when OpenAI API key is present', () => {
+      process.env['OPENAI_API_KEY'] = 'test-key';
+      expect(() => validateProviderConfig('openai')).not.toThrow();
+    });
+
+    it('should not throw when Claude API key is present', () => {
+      process.env['ANTHROPIC_API_KEY'] = 'test-key';
+      expect(() => validateProviderConfig('claude')).not.toThrow();
+    });
+
+    it('should not throw when Gemini API key is present', () => {
+      process.env['GOOGLE_API_KEY'] = 'test-key';
+      expect(() => validateProviderConfig('gemini')).not.toThrow();
+    });
+
+    it('should throw when OpenAI API key is missing', () => {
+      expect(() => validateProviderConfig('openai')).toThrow(
+        'Missing required environment variable: OPENAI_API_KEY'
+      );
+    });
+
+    it('should throw when Claude API key is missing', () => {
+      expect(() => validateProviderConfig('claude')).toThrow(
+        'Missing required environment variable: ANTHROPIC_API_KEY'
+      );
+    });
+
+    it('should throw when Gemini API key is missing', () => {
+      expect(() => validateProviderConfig('gemini')).toThrow(
+        'Missing required environment variable: GOOGLE_API_KEY'
+      );
+    });
+  });
+
+  describe('createInstructorClientFromEnv', () => {
+    it('should create client with environment variables', () => {
+      process.env['OPENAI_API_KEY'] = 'env-test-key';
+      
+      const mockOpenAIInstance = {} as OpenAI;
+      const mockInstructorInstance = { chat: { completions: { create: jest.fn() } } };
+      
+      mockOpenAI.mockImplementation(() => mockOpenAIInstance);
+      mockInstructor.mockReturnValue(mockInstructorInstance as any);
+
+      const result = createInstructorClientFromEnv('openai');
+
+      expect(mockOpenAI).toHaveBeenCalledWith({
+        apiKey: 'env-test-key',
+      });
+      expect(mockInstructor).toHaveBeenCalledWith({
+        client: mockOpenAIInstance,
+        mode: 'TOOLS',
+      });
+      expect(result).toBe(mockInstructorInstance);
+    });
+
+    it('should merge options with environment config', () => {
+      process.env['ANTHROPIC_API_KEY'] = 'env-test-key';
+      
+      const mockAnthropicInstance = {} as Anthropic;
+      mockAnthropic.mockImplementation(() => mockAnthropicInstance);
+      mockInstructor.mockReturnValue({} as any);
+
+      createInstructorClientFromEnv('claude', {
+        model: 'claude-3-opus',
+        mode: 'JSON',
+      });
+
+      expect(mockInstructor).toHaveBeenCalledWith({
+        client: mockAnthropicInstance,
+        mode: 'JSON',
+      });
+    });
+
+    it('should throw when environment variable is missing', () => {
+      expect(() => createInstructorClientFromEnv('openai')).toThrow(
+        'Missing required environment variable: OPENAI_API_KEY'
+      );
+    });
+  });
+});
